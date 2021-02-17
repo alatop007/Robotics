@@ -1,0 +1,289 @@
+<!DOCTYPE aesl-source>
+<network>
+
+
+<!--list of global events-->
+<constant value="420" name="BLACK_THRESHOLD"/>
+<constant value="0" name="EXPLORE"/>
+<constant value="500" name="HIGH_SP"/>
+<constant value="1" name="LINE_FOLLOW"/>
+<constant value="300" name="LOW_SP"/>
+<constant value="500" name="MAX_SP"/>
+<constant value="0" name="NO_SP"/>
+<constant value="3000" name="OBSTACLE_THRESHOLD"/>
+<constant value="5" name="STOP_AND_PASS"/>
+<constant value="3" name="STOP_WITH_BUTTON"/>
+<constant value="400" name="TIMER_0"/>
+<constant value="400" name="TIMER_1"/>
+<constant value="2" name="WANDER"/>
+<constant value="550" name="WHITE_THRESHOLD"/>
+<constant value="0" name="ZERO_SP"/>
+
+
+<!--node -->
+<node name=""><![CDATA[##
+##NB: Subroutine are lower cases while states/behaviours are upper cases
+
+
+# EXPLORE STATE = 0 - NO LED ON
+# BLUE LINE FOLLOWING = 1 - LEDS ARE BLUE
+# WANDER = 2 - LEDS ARE GREEN
+#STOP_WITH_BUTTON - 3
+
+
+#Initialisation of some variables
+var turning #used for the safe passage of the two robots
+
+# Initialisation of the first state/behaviour of the robot called EXPLORE
+# This state start the robots and move them in a forward direction
+ # This set the the initial state at the start of the program to EXPLORE
+var state = EXPLORE
+
+#This subroutine drives the robot forward, the two motors are at maximum speed
+# This answers question 2 of basic functionality
+callsub drive_forward 
+
+#Initiliasing the timer for EXPLORE state
+timer.period[0] = 0 
+
+#All the used leds initially turned off
+call leds.top(0,0,0)
+call leds.buttons (0,0,0,0)
+call leds.circle(0,0,0,0,0,0,0,0)
+
+#################################################
+#Event handlers for the proximity sensors
+onevent prox 
+
+			if  state == EXPLORE then  
+						callsub avoid_obstacle	# At this state avoid obstacle		
+			end
+			
+			callsub line_following #This sub enables the robot to follow the blue lines and set state = LINE_FOLLOW 
+			callsub avoid_black_line # This will ensure that even if when the robot detects the gray area of the black line as blue, it will still avoid the black line so that it doesn't get stuck at the other side.
+			
+			#This answers the question 4 of the advanced functionality
+			if  state != LINE_FOLLOW and state != EXPLORE then # If state is not 0 and 1 
+						state = WANDER #switch to WANDER state after timer0 for LINE_FOLLOW expires
+  						callsub drive_forward #At this state drive forward
+						callsub avoid_obstacle	# At this state avoid obstacle			
+						callsub avoid_black_line #At this state avoid the black line 
+						call leds.top(0,32,0) # At this state, turn the Green led on
+						call leds.buttons (0,0,0,0) # At this state, turn the button off
+ 			end
+ return
+# End of proximity event handler
+#################################################
+
+
+####################################################
+#The onevent timer0 toggles between states
+# This section answers question 1 of the advanced functionality
+onevent timer0
+			if state != STOP_WITH_BUTTON then # Ignore if STOP behavior is active
+        				state = WANDER #Switch to EXPLORE state
+        				callsub drive_forward # drive forward
+    		else
+        				callsub stop_moving # stop the robot
+    		end
+return
+
+#The button event handler
+onevent button.forward
+			when button.forward == 1 do # Only react to new button presses
+						if state == STOP_WITH_BUTTON then
+            						state = WANDER #When button is released, go to state 0
+            						callsub drive_forward # and drive forward
+       				else
+            						state = STOP_WITH_BUTTON
+			  						callsub stop_moving
+						end
+				end
+return
+ ################################################
+
+
+#################################################
+### This subroutine uses the ground sensor to detect the blue line,
+### It does this by checking the different between the range of black and white sensoring because the blue line is similar to a gray colour which is between the range of white and black colour. After detecting the blue line, it uses each sensor to turn slight to the opposite side of the sensor ensuring that it stays on the line. and this state is LINE_FOLLOWING = 1
+# N:B Longer timer.period[0] were used to ensure that the LINE_FOllOW state  persist for atleast 8000ms before swicting to WANDER state.
+#This answers question 1 of basic functionality.
+
+sub  line_following
+
+			if(prox.ground.delta[0] > BLACK_THRESHOLD and prox.ground.delta[0] < WHITE_THRESHOLD) or  (prox.ground.delta[1] > BLACK_THRESHOLD  and prox.ground.delta[1] < WHITE_THRESHOLD) then #if any or the ground sensors detect a blue line
+			
+						if prox.ground.delta[0] > BLACK_THRESHOLD and prox.ground.delta[0] < WHITE_THRESHOLD then	#if the left ground sensor detect a blue line	
+									callsub drift_right # the robot should drift right
+									call leds.buttons(0,32,0,0) #Turn ON the right button led on the robot
+									callsub stop_and_pass #if obstacle is detected, stop and pass safely
+									timer.period[0] =TIMER_0 * 20 # sustain the drifting for atleast TIMER_0 * 20 ms
+						elseif prox.ground.delta[1] > BLACK_THRESHOLD and prox.ground.delta[1] < 	WHITE_THRESHOLD  then		#if the right  ground sensor detect a blue line	
+									callsub drift_left # the robot should drift left 
+									call leds.buttons(0,0,0,32) #Turn ON the right button led on the robot
+									callsub stop_and_pass #if obstacle is detected, stop and pass safely
+						timer.period[0] = (TIMER_0 * 20) - 50 # sustain the drifting for atleast (TIMER_0 * 20) - 50ms 
+						end
+						state = LINE_FOLLOW # Assign the state LINE_FOLLOW to this behaviour
+						call leds.top(0,0,32) # Turn on the blue led
+			end															
+return
+###################################################
+
+
+####################################################
+##This subroutine allows for safe passage of both robots.
+##It has been modified to allow for passing objects obstructing the blue line
+## The high value for the threshold ensures that it get close to the object before detecting
+## and this will ensure it pass the object safely
+## The Timer.period[1] is used to make transitions of behaviours called turning
+## This subroutine is called within the LINE_FOLLOW state
+## This answers questions 3 (STOP WHEN MEET) and 4 (PASS SAFELY) of basic functionality, also see onevent timer1.
+
+sub stop_and_pass
+			if prox.horizontal[0] > OBSTACLE_THRESHOLD or prox.horizontal[1] > OBSTACLE_THRESHOLD or prox.horizontal[2] > OBSTACLE_THRESHOLD or prox.horizontal[3] >   OBSTACLE_THRESHOLD or prox.horizontal[4] > OBSTACLE_THRESHOLD then #if robot detects object
+						callsub stop_moving #stop for a while as specified by timer.period[0] = 400ms 
+						call leds.top(32,0,0) # The red led comes on
+						turning = 0 #initial state which stops the robots
+						timer.period[0] = TIMER_0 
+						timer.period[1] = TIMER_1 -  200 #the robot stops for 200ms
+			end
+return
+#######################################################
+
+#######################################################
+## This timer.period[1] setup in a way that it allows transitions of different behaviour at different time interval
+##  It enable the robots to pass each other safely 
+## It has been optimised to also enable robots to pass object safely
+## This is an extension for the answer to the question 4 of basic functionality and answer to question 3 of advanced functionality.
+
+onevent timer1
+			if turning == 0  then
+		 				callsub turn_right     #turns the robot right (90 degrees)
+   						timer.period[1] = TIMER_1 # for a period of 400ms
+			elseif turning == 1 then
+   						callsub drive_forward #drives the robot forward
+    					timer.period[1] = TIMER_1 * 2 # for a period of 800ms
+   			elseif turning == 2 then
+						callsub turn_left #turns the robot left (90 degrees)
+		    			timer.period[1] = TIMER_1  # for a period of 400ms
+  			elseif turning == 3 then 
+		    			callsub drive_forward #drives the robot forward
+		    			timer.period[1] = TIMER_1 * 4 # for a period of 1600ms
+  			elseif turning == 4 then
+						callsub turn_left #turns the robot right (~60 degrees)
+		    			timer.period[1] = TIMER_1 - 150 # for a period of 300ms, it enables that the robot are bend to detect same sensor and join the line again in opposite directions
+      		elseif turning == 5 then
+    					callsub drive_forward  #drives the robot forward and join the line again
+   						timer.period[1] = TIMER_1 * 3 # for a period of 1200ms
+   						timer.period[0] = TIMER_0 * 3 # for a period of 1200ms
+			end
+ 			turning++ #Increase the turning by one until a new behaviour is detected and then go back to ZERO
+return 
+####################################################
+
+
+#####################################################
+##This subroutine is used to avoid the the black line, it keeps the the robots outside the black line.
+## This answers the question 2 of the advance functionalty 
+sub avoid_black_line
+			if  prox.ground.reflected[0]< BLACK_THRESHOLD or prox.ground.reflected[1] < BLACK_THRESHOLD then
+						#if left sensor detect black line
+						if  prox.ground.reflected[0] < BLACK_THRESHOLD then 
+									callsub turn_right		#so turn right
+									timer.period[0] = TIMER_0 #timer for 400ms	
+									
+						#if right sensor detect black line
+						elseif prox.ground.reflected[1] < BLACK_THRESHOLD then 
+									callsub turn_left  #so turn left
+									timer.period[0] = TIMER_0 - 50 #timer for 350ms
+						end
+			end
+return 
+##########################################################
+
+
+##########################################################
+#This subroutine is used to avoid all object while the robots are EXPLORING or WANDERING
+#They deflect away when they notice object on their paths
+## This answers the question 4 of the advance functionalty 
+
+sub avoid_obstacle
+			if  prox.horizontal[0] > OBSTACLE_THRESHOLD or prox.horizontal[1] > OBSTACLE_THRESHOLD or   prox.horizontal[2] > OBSTACLE_THRESHOLD  or prox.horizontal[3] > OBSTACLE_THRESHOLD or  prox.horizontal[4] > OBSTACLE_THRESHOLD  then
+						#middle and left sensors detects object so turn right
+						if prox.horizontal[1] > OBSTACLE_THRESHOLD and prox.horizontal[0] > OBSTACLE_THRESHOLD or  prox.horizontal[2] > OBSTACLE_THRESHOLD then
+									callsub turn_right 
+									timer.period[0] = TIMER_0 #timer for 400ms
+						end
+						#right  sensors detects object so turn left
+						if prox.horizontal[3] > OBSTACLE_THRESHOLD and prox.horizontal[4] > OBSTACLE_THRESHOLD then
+									callsub turn_left
+									timer.period[0] = TIMER_0 - 50 #timer for 350ms
+						end
+			end
+return
+###########################################################
+
+
+
+############################################################
+# OTHER MOTIONS SUBROUTINES
+
+#This subroutine is to allow the robot to drift right i.e. left motor reduces
+# to 300 and right is at maximum speed
+sub drift_right
+		motor.left.target = LOW_SP
+		motor.right.target = MAX_SP
+return
+
+#This subroutine is to allow the robot to drift left i.e. right motor reduces
+# to 300 and right is at maximum speed
+sub drift_left
+		motor.left.target = MAX_SP
+		motor.right.target = LOW_SP
+return 
+
+#This subroutine stops the robot from moving i.e. both motors are at zero speeds
+sub stop_moving
+  		motor.left.target = ZERO_SP
+		motor.right.target = ZERO_SP
+return
+
+#This subroutine is to allow the robot to drive forward at maximum speed i.e. 
+# both motors are at maximum speed
+sub drive_forward
+  		motor.left.target = MAX_SP
+		motor.right.target = MAX_SP
+return
+
+#This subroutine is to allow the robot to turn completely left i.e. right motor is
+#at the neagtive of max speed while left  motor is at positive maximum speed
+sub turn_left
+  		motor.left.target = -MAX_SP
+		motor.right.target = MAX_SP
+return
+
+#This subroutine is to allow the robot to turn completely right i.e. left motor is
+#at the neagtive of max speed while right motor is at positive maximum speed
+sub turn_right
+  		motor.left.target = MAX_SP
+		motor.right.target = -MAX_SP
+return
+
+	
+
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+]]></node>
+
+
+</network>
